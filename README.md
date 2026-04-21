@@ -1,4 +1,4 @@
-# The Star Mapper
+# Hałeya's Star Mapper
 
 skibidi sigma rizler gyatgaytsigmaismga ohio alpha omega fanum tax 6767 69420 41
 The Star Mapper is an interactive 3D star projection web app for plotting stars by coordinates (in light years), editing stellar metadata, and exploring the map with smooth arcball rotation and zoom.
