@@ -54,7 +54,6 @@ camera.position.set(0, 0, cameraDistance);
 
 const starGroup = new THREE.Group();
 scene.add(starGroup);
-scene.add(createBackgroundStars());
 
 const ambient = new THREE.AmbientLight(0xffffff, 0.88);
 scene.add(ambient);
@@ -77,6 +76,16 @@ const tempVec = new THREE.Vector3();
 const tempWorldVec = new THREE.Vector3();
 const tempLocalVec = new THREE.Vector3();
 const tempLocalVec2 = new THREE.Vector3();
+const tempCamForward = new THREE.Vector3();
+const tempCamRight = new THREE.Vector3();
+const tempCamUp = new THREE.Vector3();
+const tempWorldOffset = new THREE.Vector3();
+const tempLocalOffset = new THREE.Vector3();
+const tempInvGroupQuat = new THREE.Quaternion();
+const tempDeclutterScreenOffset = new THREE.Vector2();
+const SYSTEM_COMPONENT_RE = /^(.+\S)\s+([A-Z](?:[a-z])?)$/;
+const STAR_DECLUTTER_DISTANCE_LY = 0.1;
+const STAR_DECLUTTER_MAX_GROUP_PX = 26;
 
 const interaction = {
   isDragging: false,
@@ -90,9 +99,11 @@ const interaction = {
 const axisNameLabels = [];
 const axisTickLabelPool = [];
 const axisTickLabelEntries = [];
+const systemLabelPool = [];
 let axisTickSegments = null;
 let lastAxisStep = null;
 let lastAxisExtent = null;
+let lastAxisMask = null;
 buildAxisNameLabels();
 
 let distanceMeasureIds = [];
@@ -354,15 +365,15 @@ const StellarModel = {
   luminosityClassScale(spectralType) {
     const s = (spectralType || "").toUpperCase();
     if (!s) return 1;
-    if (/VI\b/.test(s)) return 0.5;
-    if (/V\b/.test(s)) return 0.72;
-    if (/IV\b/.test(s)) return 0.92;
+    if (/VI\b/.test(s)) return 0.6;
+    if (/V\b/.test(s)) return 0.7;
+    if (/IV\b/.test(s)) return 0.9;
     if (/III\b/.test(s)) return 1.2;
-    if (/II\b/.test(s)) return 1.45;
+    if (/II\b/.test(s)) return 1.5;
     if (/IA\+?\b/.test(s)) return 2.1;
-    if (/IAB\b/.test(s)) return 1.95;
+    if (/IAB\b/.test(s)) return 1.9;
     if (/IA\b/.test(s)) return 2;
-    if (/IB\b/.test(s)) return 1.72;
+    if (/IB\b/.test(s)) return 1.7;
     if (/I\b/.test(s)) return 1.8;
     return 1;
   },
@@ -380,7 +391,7 @@ const StellarModel = {
 
     const classMatch = s.match(/^([OBAFGKMLTY])/);
     const subtypeMatch = s.match(/^([OBAFGKMLTY])([0-9](?:\.[0-9])?)/);
-    const classScale = { O: 1.35, B: 1.24, A: 1.14, F: 1.04, G: 0.96, K: 0.82, M: 0.66, L: 0.48, T: 0.36, Y: 0.28 };
+    const classScale = { O: 1.35, B: 1.24, A: 1.14, F: 1.04, G: 0.96, K: 0.82, M: 0.66, L: 0.42, T: 0.3, Y: 0.22 };
 
     let scale = classMatch ? classScale[classMatch[1]] ?? 1 : 1;
     if (subtypeMatch) {
@@ -391,7 +402,7 @@ const StellarModel = {
       const coolBoost = clamp((6000 - teff) / 3500, 0, 1);
       scale *= 1 - coolBoost * 0.1;
     }
-    return clamp(scale, 0.45, 1.5);
+    return clamp(scale, 0.22, 1.5);
   }
 };
 
@@ -502,27 +513,28 @@ function createBackgroundStars() {
 
 function createGlowTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 1024;
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext("2d");
 
-  const gradient = ctx.createRadialGradient(512, 512, 0, 512, 512, 512);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.03, "rgba(255,255,255,0.995)");
-  gradient.addColorStop(0.08, "rgba(255,255,255,0.965)");
-  gradient.addColorStop(0.16, "rgba(255,255,255,0.87)");
-  gradient.addColorStop(0.28, "rgba(255,255,255,0.69)");
-  gradient.addColorStop(0.42, "rgba(255,255,255,0.46)");
-  gradient.addColorStop(0.58, "rgba(255,255,255,0.27)");
-  gradient.addColorStop(0.74, "rgba(255,255,255,0.13)");
-  gradient.addColorStop(0.88, "rgba(255,255,255,0.05)");
+  const gradient = ctx.createRadialGradient(256, 256, 0, 256, 256, 256);
+  gradient.addColorStop(0, "rgba(255,255,255,0.98)");
+  gradient.addColorStop(0.06, "rgba(255,255,255,0.94)");
+  gradient.addColorStop(0.15, "rgba(255,255,255,0.8)");
+  gradient.addColorStop(0.29, "rgba(255,255,255,0.56)");
+  gradient.addColorStop(0.47, "rgba(255,255,255,0.32)");
+  gradient.addColorStop(0.66, "rgba(255,255,255,0.16)");
+  gradient.addColorStop(0.84, "rgba(255,255,255,0.06)");
   gradient.addColorStop(1, "rgba(255,255,255,0)");
 
   ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 1024, 1024);
+  ctx.fillRect(0, 0, 512, 512);
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.generateMipmaps = false;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   return texture;
@@ -532,18 +544,18 @@ function buildGrids() {
   const size = 140;
   const div = 14;
 
-  const xy = new THREE.GridHelper(size, div, 0x355a97, 0x1f355f);
+  const xy = new THREE.GridHelper(size, div, 0x5f95dc, 0x30518a);
   xy.rotation.x = Math.PI / 2;
-  xy.material.opacity = 0.2;
+  xy.material.opacity = 0.35;
   xy.material.transparent = true;
 
-  const xz = new THREE.GridHelper(size, div, 0x36507e, 0x1f3152);
-  xz.material.opacity = 0.18;
+  const xz = new THREE.GridHelper(size, div, 0x5a87c5, 0x304b77);
+  xz.material.opacity = 0.31;
   xz.material.transparent = true;
 
-  const yz = new THREE.GridHelper(size, div, 0x4b4f7e, 0x2a2b52);
+  const yz = new THREE.GridHelper(size, div, 0x7077c7, 0x40468b);
   yz.rotation.z = Math.PI / 2;
-  yz.material.opacity = 0.16;
+  yz.material.opacity = 0.27;
   yz.material.transparent = true;
 
   return { xy, xz, yz };
@@ -605,7 +617,152 @@ function getWorldUnitsPerPixel() {
   return (2 * cameraDistance * Math.tan(fovRad / 2)) / Math.max(1, viewerEl.clientHeight);
 }
 
-function rebuildAxisTickSegments(step, extent) {
+function getWorldUnitsPerPixelAtDistance(distance) {
+  const fovRad = (camera.fov * Math.PI) / 180;
+  return (2 * Math.max(0.01, distance) * Math.tan(fovRad / 2)) / Math.max(1, viewerEl.clientHeight);
+}
+
+function isAxisActive(axis) {
+  if (axis === "x") return Boolean(gridToggleXY?.checked || gridToggleXZ?.checked);
+  if (axis === "y") return Boolean(gridToggleXY?.checked || gridToggleYZ?.checked);
+  if (axis === "z") return Boolean(gridToggleXZ?.checked || gridToggleYZ?.checked);
+  return true;
+}
+
+function activeAxisMask() {
+  return (isAxisActive("x") ? 1 : 0) | (isAxisActive("y") ? 2 : 0) | (isAxisActive("z") ? 4 : 0);
+}
+
+function recomputeSpatialDeclutterGroups() {
+  const threshold2 = STAR_DECLUTTER_DISTANCE_LY * STAR_DECLUTTER_DISTANCE_LY;
+  const visited = new Set();
+  let clusterId = 1;
+
+  stars.forEach((s) => {
+    updateStarLabelIdentity(s);
+    s.declutterGroupSize = 1;
+    s.declutterGroupIndex = 0;
+    s.declutterClusterId = 0;
+  });
+
+  for (let i = 0; i < stars.length; i += 1) {
+    const seed = stars[i];
+    if (visited.has(seed.id)) continue;
+
+    const queue = [seed];
+    const cluster = [];
+    visited.add(seed.id);
+
+    for (let q = 0; q < queue.length; q += 1) {
+      const current = queue[q];
+      cluster.push(current);
+
+      for (let j = 0; j < stars.length; j += 1) {
+        const other = stars[j];
+        if (visited.has(other.id)) continue;
+
+        const dx = current.x - other.x;
+        const dy = current.y - other.y;
+        const dz = current.z - other.z;
+        if (dx * dx + dy * dy + dz * dz > threshold2) continue;
+
+        visited.add(other.id);
+        queue.push(other);
+      }
+    }
+
+    cluster.sort((a, b) => a.id - b.id);
+    const size = cluster.length;
+    cluster.forEach((s, idx) => {
+      s.declutterGroupSize = size;
+      s.declutterGroupIndex = idx;
+      s.declutterClusterId = clusterId;
+    });
+    clusterId += 1;
+  }
+
+  recomputeDeclutterLocalOffsets();
+}
+
+function parseSystemComponent(name) {
+  const clean = (name || "").trim();
+  const m = clean.match(SYSTEM_COMPONENT_RE);
+  if (!m) return { root: null, component: null };
+  return { root: m[1], component: m[2] };
+}
+
+function updateStarLabelIdentity(star) {
+  const parsed = parseSystemComponent(star.name);
+  star.systemRoot = parsed.root;
+  star.systemComponent = parsed.component;
+  star.primaryLabel = parsed.component || star.name;
+}
+
+function ensureSystemLabelPool(size) {
+  while (systemLabelPool.length < size) {
+    const el = createOverlayLabel("", "system-label");
+    el.textContent = "";
+    const title = document.createElement("div");
+    title.className = "system-label-title";
+    const bracket = document.createElement("div");
+    bracket.className = "system-label-bracket";
+    el.append(title, bracket);
+    systemLabelPool.push(el);
+  }
+}
+
+function hideUnusedSystemLabels(startIndex) {
+  for (let i = startIndex; i < systemLabelPool.length; i += 1) {
+    systemLabelPool[i].style.display = "none";
+  }
+}
+
+function getDeclutterScreenOffset(star, outVec2) {
+  if ((star.declutterGroupSize ?? 1) <= 1) {
+    outVec2.set(0, 0);
+    return outVec2;
+  }
+
+  const count = star.declutterGroupSize;
+  const idx = star.declutterGroupIndex ?? 0;
+  const baseAngle = (star.declutterClusterId ?? 0) * 1.61803398875;
+  const angle = baseAngle + (idx / count) * Math.PI * 2;
+  const radiusPx = Math.min(STAR_DECLUTTER_MAX_GROUP_PX, 6 + (count - 1) * 2.4);
+  outVec2.set(Math.cos(angle) * radiusPx, Math.sin(angle) * radiusPx);
+  return outVec2;
+}
+
+function recomputeDeclutterLocalOffsets() {
+  // Camera-independent declutter so clustered stars separate without camera snapping.
+  stars.forEach((star) => {
+    star.declutterOffsetX = 0;
+    star.declutterOffsetY = 0;
+    star.declutterOffsetZ = 0;
+    if ((star.declutterGroupSize ?? 1) <= 1) return;
+
+    const count = star.declutterGroupSize;
+    const idx = star.declutterGroupIndex ?? 0;
+    const baseAngle = (star.declutterClusterId ?? 0) * 1.61803398875;
+    const angle = baseAngle + (idx / count) * Math.PI * 2;
+
+    // Keep direction camera-independent, but scale amount by zoom/distance so declutter stays visually clean.
+    tempLocalVec.set(star.x, star.y, star.z);
+    tempWorldVec.copy(tempLocalVec);
+    starGroup.localToWorld(tempWorldVec);
+    const distToCamera = camera.position.distanceTo(tempWorldVec);
+    const wpp = getWorldUnitsPerPixelAtDistance(distToCamera);
+    const targetPx = Math.min(STAR_DECLUTTER_MAX_GROUP_PX, 8 + (count - 1) * 3.2);
+    const radiusLy = clamp(targetPx * wpp * 2.48, 0.02, STAR_DECLUTTER_DISTANCE_LY * 3.6);
+    const zPhase = baseAngle * 0.73 + idx * 0.91;
+    const zOffset = Math.sin(zPhase) * radiusLy * 0.35;
+
+    star.declutterOffsetX = Math.cos(angle) * radiusLy;
+    star.declutterOffsetY = Math.sin(angle) * radiusLy;
+    star.declutterOffsetZ = zOffset;
+  });
+}
+
+function rebuildAxisTickSegments(step, extent, axisMask) {
   if (axisTickSegments) {
     axisTickSegments.geometry.dispose();
     axisTickSegments.material.dispose();
@@ -620,14 +777,19 @@ function rebuildAxisTickSegments(step, extent) {
     const v = i * step;
     if (Math.abs(v) < step * 0.001) continue;
 
-    verts.push(v, -tickHalf, 0, v, tickHalf, 0);
-    verts.push(-tickHalf, v, 0, tickHalf, v, 0);
-    verts.push(0, -tickHalf, v, 0, tickHalf, v);
+    if (axisMask & 1) verts.push(v, -tickHalf, 0, v, tickHalf, 0);
+    if (axisMask & 2) verts.push(-tickHalf, v, 0, tickHalf, v, 0);
+    if (axisMask & 4) verts.push(0, -tickHalf, v, 0, tickHalf, v);
+  }
+
+  if (verts.length === 0) {
+    axisTickSegments = null;
+    return;
   }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-  const mat = new THREE.LineBasicMaterial({ color: 0x7f9dcc, transparent: true, opacity: 0.42 });
+  const mat = new THREE.LineBasicMaterial({ color: 0x9abef3, transparent: true, opacity: 0.62 });
   axisTickSegments = new THREE.LineSegments(geo, mat);
   starGroup.add(axisTickSegments);
 }
@@ -637,23 +799,28 @@ function updateDynamicAxisScale() {
   const targetSpacingPx = 78;
   const step = niceStep(worldUnitsPerPixel * targetSpacingPx);
   const extent = Math.max(step * 2, Math.ceil((worldUnitsPerPixel * viewerEl.clientHeight * 0.7) / step) * step);
+  const axisMask = activeAxisMask();
 
-  if (step !== lastAxisStep || extent !== lastAxisExtent) {
-    rebuildAxisTickSegments(step, extent);
+  if (step !== lastAxisStep || extent !== lastAxisExtent || axisMask !== lastAxisMask) {
+    rebuildAxisTickSegments(step, extent, axisMask);
     lastAxisStep = step;
     lastAxisExtent = extent;
+    lastAxisMask = axisMask;
   }
 
   axisTickLabelEntries.length = 0;
   const count = Math.floor(extent / step);
+  const xActive = (axisMask & 1) !== 0;
+  const yActive = (axisMask & 2) !== 0;
+  const zActive = (axisMask & 4) !== 0;
 
   for (let i = -count; i <= count; i += 1) {
     const v = i * step;
     if (Math.abs(v) < step * 0.001) continue;
 
-    axisTickLabelEntries.push({ axis: "x", local: new THREE.Vector3(v, 0, 0), text: formatLyValue(v, step) });
-    axisTickLabelEntries.push({ axis: "y", local: new THREE.Vector3(0, v, 0), text: formatLyValue(v, step) });
-    axisTickLabelEntries.push({ axis: "z", local: new THREE.Vector3(0, 0, v), text: formatLyValue(v, step) });
+    if (xActive) axisTickLabelEntries.push({ axis: "x", local: new THREE.Vector3(v, 0, 0), text: formatLyValue(v, step) });
+    if (yActive) axisTickLabelEntries.push({ axis: "y", local: new THREE.Vector3(0, v, 0), text: formatLyValue(v, step) });
+    if (zActive) axisTickLabelEntries.push({ axis: "z", local: new THREE.Vector3(0, 0, v), text: formatLyValue(v, step) });
   }
 }
 
@@ -663,7 +830,7 @@ function createLabelElement(starData) {
 
   const name = document.createElement("div");
   name.className = "name";
-  name.textContent = starData.name;
+  name.textContent = starData.primaryLabel || starData.name;
 
   const spectral = document.createElement("div");
   spectral.className = "spectral";
@@ -677,7 +844,8 @@ function createLabelElement(starData) {
 }
 
 function updateLabelText(star) {
-  star.labelNameEl.textContent = star.name;
+  updateStarLabelIdentity(star);
+  star.labelNameEl.textContent = star.primaryLabel || star.name;
   const s = star.spectralType?.trim() || "";
   star.labelSpectralEl.textContent = s;
   star.labelSpectralEl.style.display = s ? "block" : "none";
@@ -701,6 +869,7 @@ function disposeStarVisual(star) {
 }
 
 function buildStarObject(starData) {
+  updateStarLabelIdentity(starData);
   const renderStyle = computeRenderStyle(starData);
   const teff = effectiveTemperature(starData);
   const radius =
@@ -755,7 +924,13 @@ function buildStarObject(starData) {
     projectedX: 0,
     projectedY: 0,
     projectedDistance: 0,
-    visible: false
+    visible: false,
+    declutterGroupSize: 1,
+    declutterGroupIndex: 0,
+    declutterClusterId: 0,
+    declutterOffsetX: 0,
+    declutterOffsetY: 0,
+    declutterOffsetZ: 0
   };
 }
 
@@ -776,14 +951,9 @@ function applySelectionVisualState() {
     star.mesh.material.emissive.copy(star.mesh.material.color);
     star.labelEl.classList.toggle("measure-selected", isMeasureA || isMeasureB);
 
-    if (occ < 0.98) {
-      const blurPx = (1 - occ) * 3.2;
-      star.labelEl.style.filter = `blur(${blurPx.toFixed(2)}px) brightness(${(0.58 + 0.42 * occ).toFixed(2)})`;
-      star.labelEl.style.opacity = `${0.4 + 0.6 * occ}`;
-    } else {
-      star.labelEl.style.filter = "none";
-      star.labelEl.style.opacity = "1";
-    }
+    const faded = occ * occ * occ;
+    star.labelEl.style.filter = "none";
+    star.labelEl.style.opacity = `${0.08 + 0.92 * faded}`;
   });
 }
 
@@ -792,8 +962,31 @@ function refreshStarVisual(star) {
   Object.assign(star, buildStarObject(star));
 }
 
-function refreshAllStars() {
+function refreshAllStars({ preserveDeclutter = false } = {}) {
+  const declutterById = new Map();
+  if (preserveDeclutter) {
+    stars.forEach((star) => {
+      declutterById.set(star.id, {
+        declutterGroupSize: star.declutterGroupSize,
+        declutterGroupIndex: star.declutterGroupIndex,
+        declutterClusterId: star.declutterClusterId,
+        declutterOffsetX: star.declutterOffsetX,
+        declutterOffsetY: star.declutterOffsetY,
+        declutterOffsetZ: star.declutterOffsetZ
+      });
+    });
+  }
+
   stars.forEach((star) => refreshStarVisual(star));
+  if (preserveDeclutter) {
+    stars.forEach((star) => {
+      const state = declutterById.get(star.id);
+      if (!state) return;
+      Object.assign(star, state);
+    });
+  } else {
+    recomputeSpatialDeclutterGroups();
+  }
   applySelectionVisualState();
   renderStarList();
 }
@@ -821,6 +1014,7 @@ function addStar(starData) {
 
   Object.assign(star, buildStarObject(star));
   stars.push(star);
+  recomputeSpatialDeclutterGroups();
   applySelectionVisualState();
   renderStarList();
 }
@@ -841,6 +1035,7 @@ function removeStar(starId) {
     clearDistanceMeasure();
   }
 
+  recomputeSpatialDeclutterGroups();
   applySelectionVisualState();
   renderStarList();
 }
@@ -919,17 +1114,14 @@ function projectWorldToScreen(worldVec) {
   };
 }
 
-function updateOverlayPosition(el, local, yOffset = 0, scale = 1) {
-  tempWorldVec.copy(local);
-  starGroup.localToWorld(tempWorldVec);
-  const p = projectWorldToScreen(tempWorldVec);
-  if (!p.visible) {
-    el.style.display = "none";
-    return;
-  }
-
-  el.style.display = "block";
-  el.style.transform = `translate(${p.x}px, ${p.y - yOffset}px) translate(-50%, -100%) scale(${scale})`;
+function getScreenNormalOffset(from, to, offsetPx) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const mag = Math.hypot(dx, dy) || 1;
+  return {
+    x: from.x + (-dy / mag) * offsetPx,
+    y: from.y + (dx / mag) * offsetPx
+  };
 }
 
 function updateAxisOverlays() {
@@ -941,6 +1133,11 @@ function updateAxisOverlays() {
   const originP = projectWorldToScreen(originWorld);
 
   axisNameLabels.forEach((a) => {
+    if (!isAxisActive(a.axis)) {
+      a.el.style.display = "none";
+      return;
+    }
+
     if (a.axis === "x") tempLocalVec.set(axisEnd, 0, 0);
     if (a.axis === "y") tempLocalVec.set(0, axisEnd, 0);
     if (a.axis === "z") tempLocalVec.set(0, 0, axisEnd);
@@ -953,16 +1150,9 @@ function updateAxisOverlays() {
       return;
     }
 
-    const dx = p.x - originP.x;
-    const dy = p.y - originP.y;
-    const mag = Math.hypot(dx, dy) || 1;
-    const nx = -dy / mag;
-    const ny = dx / mag;
-    const offsetPx = 12;
-    const lx = p.x + nx * offsetPx;
-    const ly = p.y + ny * offsetPx;
+    const labelPos = getScreenNormalOffset(originP, p, 12);
     a.el.style.display = "block";
-    a.el.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
+    a.el.style.transform = `translate(${labelPos.x}px, ${labelPos.y}px) translate(-50%, -100%)`;
   });
 
   ensureTickLabelPool(axisTickLabelEntries.length);
@@ -991,42 +1181,174 @@ function updateAxisOverlays() {
       continue;
     }
 
-    const dx = p2.x - p.x;
-    const dy = p2.y - p.y;
-    const mag = Math.hypot(dx, dy) || 1;
-    const nx = -dy / mag;
-    const ny = dx / mag;
-    const offsetPx = 9;
-    const lx = p.x + nx * offsetPx;
-    const ly = p.y + ny * offsetPx;
+    const labelPos = getScreenNormalOffset(p, p2, 9);
 
     el.style.display = "block";
-    el.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
+    el.style.transform = `translate(${labelPos.x}px, ${labelPos.y}px) translate(-50%, -100%)`;
   }
   hideUnusedTickLabels(axisTickLabelEntries.length);
 }
 
 function updateLabelPositions() {
-  stars.forEach((star) => {
-    star.mesh.getWorldPosition(tempWorldVec);
-    const p = projectWorldToScreen(tempWorldVec);
-    star.visible = p.visible;
+  const visibleByCluster = new Map();
 
-    if (!p.visible) {
+  stars.forEach((star) => {
+    tempLocalVec.set(
+      star.x + (star.declutterOffsetX ?? 0),
+      star.y + (star.declutterOffsetY ?? 0),
+      star.z + (star.declutterOffsetZ ?? 0)
+    );
+    star.mesh.position.copy(tempLocalVec);
+    star.glow.position.copy(tempLocalVec);
+
+    tempWorldVec.copy(tempLocalVec);
+    starGroup.localToWorld(tempWorldVec);
+    const baseProj = projectWorldToScreen(tempWorldVec);
+    star.visible = baseProj.visible;
+
+    if (!baseProj.visible) {
       star.labelEl.style.display = "none";
       return;
     }
+    const p = baseProj;
 
     star.projectedX = p.x;
     star.projectedY = p.y;
+    star.labelProjectedX = p.x;
+    star.labelProjectedY = p.y;
     star.projectedDistance = camera.position.distanceTo(tempWorldVec);
+    star.projectedRadiusPx = Math.max(
+      1,
+      star.radius / Math.max(1e-6, getWorldUnitsPerPixelAtDistance(star.projectedDistance))
+    );
+    star.labelAnchor = "top";
 
-    const scale = clamp(94 / star.projectedDistance, 0.72, 1.34);
-    const yOffset = 10 + star.radius * 20;
+    if ((star.declutterGroupSize ?? 1) > 1) {
+      let arr = visibleByCluster.get(star.declutterClusterId);
+      if (!arr) {
+        arr = [];
+        visibleByCluster.set(star.declutterClusterId, arr);
+      }
+      arr.push(star);
+    }
+  });
+
+  visibleByCluster.forEach((clusterStars) => {
+    if (clusterStars.length <= 1) return;
+    let cx = 0;
+    let cy = 0;
+    clusterStars.forEach((s) => {
+      cx += s.labelProjectedX;
+      cy += s.labelProjectedY;
+    });
+    cx /= clusterStars.length;
+    cy /= clusterStars.length;
+
+    clusterStars.forEach((s) => {
+      const dx = s.labelProjectedX - cx;
+      const dy = s.labelProjectedY - cy;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        s.labelAnchor = dx < 0 ? "left" : "right";
+      } else {
+        s.labelAnchor = dy < 0 ? "top" : "bottom";
+      }
+    });
+  });
+
+  stars.forEach((star) => {
+    if (!star.visible) return;
+    const isClustered = (star.declutterGroupSize ?? 1) > 1;
+    const labelRadiusPx = clamp(star.projectedRadiusPx, 1, 11.2);
+    const topOffset = (7 + labelRadiusPx) * 0.8;
+    const sideOffset = (11 + labelRadiusPx * 0.8) * 0.8;
+    const sideLift = labelRadiusPx * 0.2;
+    let x = star.labelProjectedX;
+    let y = star.labelProjectedY;
+    let tx = "-50%";
+    let ty = "-100%";
+
+    if (star.labelAnchor === "left") {
+      x -= sideOffset;
+      y -= sideLift;
+      tx = "-100%";
+      ty = "-50%";
+    } else if (star.labelAnchor === "right") {
+      x += sideOffset;
+      y -= sideLift;
+      tx = "0%";
+      ty = "-50%";
+    } else if (star.labelAnchor === "bottom") {
+      y += sideOffset * 0.6;
+      tx = "-50%";
+      ty = "0%";
+    } else {
+      y -= topOffset;
+      tx = "-50%";
+      ty = "-100%";
+    }
 
     star.labelEl.style.display = "block";
-    star.labelEl.style.transform = `translate(${p.x}px, ${p.y - yOffset}px) translate(-50%, -100%) scale(${scale})`;
+    star.labelEl.classList.toggle("cluster-component", isClustered);
+    star.labelEl.style.transform = `translate(${x}px, ${y}px) translate(${tx}, ${ty})`;
+    star.labelScreenX = x;
+    star.labelScreenY = y;
   });
+}
+
+function updateSystemLabels() {
+  const groups = new Map();
+  const viewerRect = viewerEl.getBoundingClientRect();
+
+  stars.forEach((star) => {
+    if (!star.visible || !star.systemRoot || !star.systemComponent) return;
+
+    const rect = star.labelEl.getBoundingClientRect();
+    const left = rect.left - viewerRect.left;
+    const right = rect.right - viewerRect.left;
+    const top = rect.top - viewerRect.top;
+    if (!Number.isFinite(left) || !Number.isFinite(right) || !Number.isFinite(top)) return;
+
+    let g = groups.get(star.systemRoot);
+    if (!g) {
+      g = {
+        count: 0,
+        minLeft: Infinity,
+        maxRight: -Infinity,
+        topY: Infinity,
+        dimmedCount: 0
+      };
+      groups.set(star.systemRoot, g);
+    }
+    g.count += 1;
+    g.minLeft = Math.min(g.minLeft, left);
+    g.maxRight = Math.max(g.maxRight, right);
+    g.topY = Math.min(g.topY, top);
+    if ((star.occlusion ?? 1) < 0.999) g.dimmedCount += 1;
+  });
+
+  const entries = Array.from(groups.entries()).filter(([, g]) => g.count >= 2);
+  ensureSystemLabelPool(entries.length);
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const [root, g] = entries[i];
+    const el = systemLabelPool[i];
+    const titleEl = el.querySelector(".system-label-title");
+    const bracketEl = el.querySelector(".system-label-bracket");
+    const centerX = (g.minLeft + g.maxRight) * 0.5;
+    const projectedWidth = g.maxRight - g.minLeft;
+    const clusterWidth = Math.max(12, projectedWidth + 10);
+    // Keep cluster label vertical spacing in fixed screen-space, same style as star labels.
+    const y = Math.max(2, g.topY - 12);
+    const dimRatio = g.count > 0 ? g.dimmedCount / g.count : 0;
+
+    titleEl.textContent = root;
+    bracketEl.style.width = `${clusterWidth}px`;
+    el.style.width = `${clusterWidth}px`;
+    el.style.opacity = `${clamp(1 - dimRatio, 0.12, 1)}`;
+    el.style.display = "block";
+    el.style.transform = `translate(${centerX}px, ${y}px) translate(-50%, 0)`;
+  }
+  hideUnusedSystemLabels(entries.length);
 }
 
 function applyDepthOcclusion() {
@@ -1045,7 +1367,7 @@ function applyDepthOcclusion() {
       const dx = a.projectedX - b.projectedX;
       const dy = a.projectedY - b.projectedY;
       const dist2 = dx * dx + dy * dy;
-      const threshold = 13 + (a.radius + b.radius) * 5.5;
+      const threshold = (13 + (a.radius + b.radius) * 5.5) * 0.4;
 
       if (dist2 > threshold * threshold) continue;
 
@@ -1455,6 +1777,7 @@ Object.values(editInputs).forEach((input) => {
     star.luminosity = parseMaybeNumber(editInputs.luminosity.value);
 
     refreshStarVisual(star);
+    recomputeSpatialDeclutterGroups();
     updateLabelText(star);
     selectedTitle.textContent = `Selected ${star.name}`;
     selectionHint.textContent = "Update fields to edit this star.";
@@ -1473,7 +1796,7 @@ lumTuneBtn.addEventListener("click", () => {
   luminosityTuningEnabled = !luminosityTuningEnabled;
   lumTuneBtn.textContent = `Tune Luminosity: ${luminosityTuningEnabled ? "On" : "Off"}`;
   lumTuneBtn.classList.toggle("active", luminosityTuningEnabled);
-  refreshAllStars();
+  refreshAllStars({ preserveDeclutter: true });
 });
 
 exportCsvBtn.addEventListener("click", exportStarsAsCsv);
@@ -1548,8 +1871,10 @@ function animate() {
   const dt = clock.getDelta();
   starGroup.rotation.y += dt * 0.02;
 
+  recomputeDeclutterLocalOffsets();
   updateDynamicAxisScale();
   updateLabelPositions();
+  updateSystemLabels();
   updateAxisOverlays();
   applyDepthOcclusion();
   updateDistanceMeasureVisual();
